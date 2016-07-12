@@ -7,96 +7,137 @@ Tools for open forcefield development.
 ### Physical property measurements
 
 [**Physical property measurements**](https://en.wikipedia.org/wiki/Physical_property) are measured properties of a substance that provide some information about the physical parameters that define the interactions within the substance.
+
 A physical property is defined by a combination of:
-* A `Mixture` specifying the substance that the measurement was performed on
-* A `ThermodynamicState` specifying the thermodynamic conditions under which the measurement was performed
-* A `PhysicalProperty` is the physical property that was measured
-* A `MeasurementMethod` specifying the kind of measurement that was performed
+* The thermodynamic state the substance that the measurement was performed on, including temperature, pressure, composition, and phase.
+* The type of physical property that was was measured (mass density, heat capacity, etc.)
+* The experimental approach that was used to obtain the measurement.
 
-An example of each:
-* `Mixture`: 0.8 mole fraction mixture of ethanol and water
-* `ThermodynamicState`: 298 kelvin, 1 atmosphere
-* `PhysicalProperty`: mass density
-* `MeasurementMethod`: vibrating tube method
+An example:
 
-#### Physical substances
+* The thermodynamic state is 298 kelvin, 1 atmosphere, with a mixture of 0.8 mole fraction ethanol and and 0.2 mole fraction water in liquid phase  
+* The physical property is the mass density.
+* The method that used performed was the vibrating tube method.
 
-We use the concept of a liquid or gas `Mixture` throughout.
+In the API, different physical properties such as `MassDensity` are subclasses of the `PhysicalProperty` class.
 
-A simple liquid has only one component:
+A `PhysicalProperty` class has properties:
+* `.ThermodynamicState`: A `ThermodynamicState` object
+* `.MeasurementMethod`: A `MeasurementMethod` object 
+* `.value`: the value, a float with units
+* `.uncertainty`: the statistical uncertainty, a float with units 
+* `.reference` - the literature reference (if present) for the measurement
+* `.DOI` - the literature reference DOI (if available) for the measurement
+*. `model` - the model that is used to generate the data (if computation)
+
+The value, uncertainty, reference, and DOI do not necessarily need to be defined for a dataset in order for property calculations to be performed.
+ 
+If this physical property is a computation, we could additionally have a 'Model' object, which would include the force field parameters and functional form, but do not need to be defined.
+
+#### Thermodynamic states
+
+A `ThermodynamicState` specifies a combination of thermodynamic parameters (e.g. temperature, pressure) at which a measurement is performed, the phase, as well as the composition.
+
+The `ThermodynamicState` class has properties:
+* `.T`: the temperature of the system, a float with simtk units
+* `.P`: the pressure of the system, a float with simtk units
+* `.composition`: a `Composition` class describing the chemical composition of the system
+* `.phase`: the phase, for now a string but will likely be an object eventually.
+
+For interfaces, we many need to add members such as surface tension, etc.
+
 ```python
-liquid = Mixture()
+from simtk import unit
+thermodynamic_state = ThermodynamicState(pressure=500*unit.kilopascals, temperature=298.15*unit.kelvin, composition=Composition, phase=`liquid`)
+```
+
+We use the `simtk.unit` unit system from [OpenMM](http://openmm.org) for units. 
+
+For now, `phase` is a string, and can be `None`, as it does not necessarily need to be used if
+carrying out a simulation where there is only one stable equilibrium
+state. `phase` can be 'IsolatedMolecule' for simulation properties of
+individual molecules.  `liquid` and `gas` are other possible phases.  ThermoML has additional phase descriptions which may be necessary as different systems are investigated (for example, unit cell size and symmetry group for solids).  At some point, it may need to be turned into an object, ideally paralleling [ThermoML](http://trc.nist.gov/ThermoMLRecommendations.pdf) definitions.
+
+The `Composition` class specifies the composition of the system, such as [0.4 mole fraction ethanol, 0.6 mole fraction water].  
+
+We use the concept of a substance's `Composition` throughout, where we
+use a class rather than a specific list of molecule fractions or
+composition to have more flexibility in how it is specified.
+
+The basic method of the `Composition` class is `addComponent()`, which takes an chemical name as an argument, and an optional mole fraction argument.
+
+A simple liquid has only one component in the `Composition`.
+```python
+liquid = Composition()
 liquid.addComponent('water')
 ```
 
 A binary mixture has two components:
 ```python
-binary_mixture = Mixture()
+binary_mixture = Composition()
 binary_mixture.addComponent('water', mole_fraction=0.2)
 binary_mixture.addComponent('methanol') # assumed to be rest of mixture if no mole_fraction specified
 ```
 
 A ternary mixture has three components:
 ```python
-ternary_mixture = Mixture()
+ternary_mixture = Composition()
 binary_mixture.addComponent('ethanol', mole_fraction=0.2)
 binary_mixture.addComponent('methanol', mole_fraction=0.2)
 ternary_mixture.addComponent('water')
 ```
+`Composition` is specified in terms of mole fractions of each
+  component. If a simulation is performed, some decision will need to
+  be performed to decide how large the simulation should be in order
+  to get a correct value. Possibly the simulation could also perform
+  an extrapolation to larger systems if properly validated.
 
-The infinite dilution of one solute within a solvent or mixture is also specified as a `Mixture`, where the solute has zero mole fraction:
+The infinite dilution of one solute within a solvent or mixture is also specified by setting the `Composition`, where the solute has zero mole fraction:
+
 ```python
-infinite_dilution = Mixture()
+infinite_dilution = Composition()
 infinite_dilution.addComponent('phenol', mole_fraction=0.0) # infinite dilution
 infinite_dilution.addComponent('water')
 ```
 
-**TODO**:
-* Should we instead allow the user to specify one molecule of the solute, as in
+i.e., if a component exists, it must have at least one molcule.  Another alternative would be
+
 ```python
-infinite_dilution = Mixture()
-infinite_dilution.addComponent('phenol', number=1) # one molecule
-infinite_dilution.addComponent('water')
+infinite_dilution = Composition()
+infinite_dilution.addComponent('phenol', mole_fraction = 'infinite dilution') # one molecule
+infinite_dilution.addComponent('water')  # N-1 water molecules, where N is determined by the simulation.
 ```
 
-**QUESTIONS**:
-* Is the concept of `Mixture` sufficiently general that we don't need further types of substances?
-* Is it OK that we don't specify the total number of molecules in the substance, and only specify the fractional composition? We would have to specify the total number of molecules in the `PropertyCalculator` instead.
+Or something like that.
 
-#### Thermodynamic states
-
-A `ThermodynamicState` specifies a combination of thermodynamic parameters (e.g. temperature, pressure) at which a measurement is performed.
-```python
-from simtk import unit
-thermodynamic_state = ThermodynamicState(pressure=500*unit.kilopascals, temperature=298.15*unit.kelvin)
-```
-We use the `simtk.unit` unit system from [OpenMM](http://openmm.org) for units.
-
-**QUESTIONS:**
-* Is it OK to use `simtk.unit` from OpenMM for now, or should we switch to [`pint`](https://pint.readthedocs.io/en/0.7.2/) to make this more portable?
+* Previously, we used the concept of `Mixture` which was an class describing the system and how it was made.  Now, we use the concept of `Composition` which describes how it is made. 
 
 #### Measurement methods
 
-A `MeasurementMethod` subclass has information specific to the particular method used to measure a property (such as experimental uncertainty guidance).
+A `MeasurementMethod` subclass has information specific to the particular method used to measure a property (such as experimental uncertainty guidance).  The `MeasurementMethod` object can potentially closely parallel the [ThermoML](http://trc.nist.gov/ThermoMLRecommendations.pdf) specification, which has significant infrastructure for defining the measurement approach.
 
 Some examples:
 * `FlowCalorimetry` for `HeatCapacity` or `ExcessMolarEnthalpy`
 * `VibratingTubeMethod` for `MassDensity`
+* `MolecularSimulation`, where `MolecularSimulation` is an class which contains all the necessary information to generate the physical property given a model (exact enumeration of information TBD). It does not include the parameters for the model.
 
 #### Physical property measurements
 
-A `MeasuredPhysicalProperty` is a combination of `Mixture`, `ThermodynamicState`, and a unit-bearing measured property `value` and `uncertainty`:
+* Note: `MeasuredPhysicalProperty` and `ComputedPhysicalProperty` are being merged together into `PhysicalProperty`
+
+An example of creating a `PhysicalProperty`:
+
 ```python
 # Define mixture
-mixture = Mixture()
+mixture = Composition()
 mixture.addComponent('water', mole_fraction=0.2)
 mixture.addComponent('methanol')
 # Define thermodynamic state
-thermodynamic_state = ThermodynamicState(pressure=500*unit.kilopascals, temperature=298.15*unit.kelvin)
+thermodynamic_state = ThermodynamicState(pressure=500*unit.kilopascals, temperature=298.15*unit.kelvin, composition=mixture)
 # Define measurement
-measurement = ExcessMolarEnthalpy(substance, thermodynamic_state, value=83.3863244*unit.kilojoules_per_mole, uncertainty=0.1220794866*unit.kilojoules_per_mole)
+measurement = ExcessMolarEnthalpy(thermodynamic_state, value=83.3863244*unit.kilojoules_per_mole, uncertainty=0.1220794866*unit.kilojoules_per_mole)
 ```
-The various properties are all subclasses of `MeasuredPhysicalProperty` and generally follow the `<ePropName/>` ThermoML tag names.
+The various properties are all subclasses of `PhysicalProperty` and generally follow the `<ePropName/>` ThermoML tag names.
 Some examples:
 * `MassDensity` - mass density
 * `ExcessMolarEnthalpy` - excess partial apparent molar enthalpy
@@ -105,19 +146,9 @@ Some examples:
 A [roadmap of physical properties to be implemented](https://github.com/open-forcefield-group/open-forcefield-tools/wiki/Physical-Properties-for-Calculation) is available.
 Please raise an issue if your physical property of interest is not listed!
 
-Each `MeasuredPhysicalProperty` has several properties:
-* `.substance` - the `Mixture` for which the measurement was made
-* `.thermodynamic_state` - the `ThermodynamicState`
-* `.value` - the unit-bearing measurement value
-* `.uncertainty` - the standard uncertainty of the measurement
-* `.reference` - the literature reference (if present) for the measurement
-* `.DOI` - the literature reference DOI (if available) for the measurement
-
-The value, uncertainty, reference, and DOI do not necessarily need to be defined for a dataset in order for property calculations to be performed.
-
 ### Physical property datasets
 
-A `PhysicalPropertyDataset` is a collection of `MeasuredPhysicalProperty` objects that are related in some way.
+A `PhysicalPropertyDataset` is a collection of `PhysicalProperty` objects that are related in some way.
 ```python
 dataset = PhysicalPropertyDataset([measurement1, measurement2])
 ```
@@ -155,38 +186,39 @@ You can see which DOIs contribute to the current `ThermoMLDataset` with the conv
 thermoml_keys = ['10.1021/acs.jced.5b00365', '10.1021/acs.jced.5b00474']
 dataset = ThermoMLDataset(thermoml_keys)
 ```
-
 ### Estimating properties
 
-The `PropertyEstimator` class creates objects that handle property estimation of all of the properties in a dataset, given a set or sets of parameters.
+The `PropertyEstimator` class creates objects that handle property estimation of all of the properties specified in a dataset, given a set or sets of descriptions of the system.
 The implementation will isolate the user from whatever backend (local machine, HPC cluster, XSEDE resources, Amazon EC2) is being used to compute the properties, as well as whether new simulations are being launched and analyzed or existing simulation data is being reweighted.
 Different backends will take different optional arguments, but here is an example that will launch and use 10 worker processes on a cluster:
 ```python
 estimator = PropertyEstimator(nworkers=10) # NOTE: multiple backends will be supported in the future
-computed_properties = estimator.computeProperties(dataset, parameter_sets)
+computed_properties = estimator.computeProperties(dataset, model_set)
 ```
-Here, `dataset` is a `PhysicalPropertyDataset` or subclass, and `parameter_sets` is a list containing `SMIRFFParameterSet` objects used to parameterize the physical systems in the dataset. This can be a single parameter set or multiple (usually related) parameter sets.
+Here, `dataset` is a set of `PhysicalProperties`, and `model_set` is set of a `SMIRFFParameterSet` used to define the physical model of the systems described in the dataset.  There could be one or many elements in the `model_set`. They could differ in force field functional form, or simply parameters.
 
-`PropertyEstimator.computeProperties(...)` returns a list of `ComputedPhysicalProperty` objects that provide access to several pieces of information:
-* `property.value` - the computed property value, with appropriate units
-* `property.uncertainty` - the statistical uncertainty in the computed property
-* `property.parameters` - a reference to the parameter set used to compute this property
-* `property.property` - a reference to the corresponding `MeasuredPhysicalProperty` this property was computed for
+Optionally, this can take a `MolecularSimulation` object (that can specify how to do the simulation, but this can also be done by default.
+
+`PropertyEstimator.computeProperties(...)` returns a list of `PhysicalProperty` objects. As defined previously, they have:
+* `.value` - the computed property value, with appropriate units
+* `.uncertainty` - the statistical uncertainty in the computed property
+* `.MeasurementMethod` - an object giving the MeasurementMethod (in this case, simulation approach) used to compute this property
+* `.Model` - a reference to the parameters used to generate the model. In this case, the model is included, since the properties were generated with the model. Currently, the models will only differ by parameter set, but later the file formats can be updated to allow them to differ in functional form as well.
 
 This API can be extended in the future to provide access to the simulation data used to estimate the property, such as
 ```python
 # Attach to my compute and storage resources
 estimator = PropertyEstimator(...)
 # Estimate some properties
-computed_properties = estimator.computeProperties(dataset, parameters)
+computed_properties = estimator.computeProperties(dataset, models)
 # Get statistics about simulation data that went into each property
 for property in computed_properties:
    # Get statistics about simulation data that was reweighted to estimate this property
    for simulation in property.simulations:
       print('The simulation was %.3f ns long' % (simulation.length / unit.nanoseconds))
       print('The simulation was run at %.1f K and %.1f atm' % (simulation.thermodynamic_state.temperature / unit.kelvin, simulation.thermodynamic_state.pressure / unit.atmospheres))
-      # Get the ParameterSet that was used for this simulation
-      parameters = simulation.parameters
+      # Get the ModelSet that was used for this simulation
+      parameters = simulation.model
       # what else do you want...?
 ```
 
@@ -205,11 +237,11 @@ dataset = ThermoMLDataset(thermoml_keys)
 # Filter the dataset to include only molar heat capacities measured between 280-350 K
 dataset.filter(ePropName='Excess molar enthalpy (molar enthalpy of mixing), kJ/mol') # filter to retain only this property name
 dataset.filter(VariableType='eTemperature', min=280*unit.kelvin, max=350*kelvin) # retain only measurements with `eTemperature` in specified range
-# Load an initial parameter set
-parameter_set = [ SMIRFFParameterSet('smarty-initial.xml') ]
+# Load an initial model set
+model_set = [ SMIRFFParameterSet('smarty-initial.xml') ]
 # Compute physical properties for these measurements
 estimator = PropertyEstimator(nworkers=10) # NOTE: multiple backends will be supported in the future
-computed_properties = estimator.computeProperties(dataset, parameter_set)
+computed_properties = estimator.computeProperties(dataset, model_set)
 # Write out statistics about errors in computed properties
 for (computed, measured) in (computed_properties, dataset):
    property_unit = measured.value.unit
